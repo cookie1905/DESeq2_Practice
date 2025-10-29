@@ -132,7 +132,14 @@ dds <- DESeq(dds)
 ```{r}
 # Variance Stabilizing Transformation and  plot PCA
 vsd <- vst(dds, blind = FALSE)
-plotPCA(vsd, intgroup="tissue_type")+ theme_grey()
+pca_plot <- plotPCA(vsd, intgroup = "tissue_type") +
+  theme_grey() +
+  theme(legend.position = "bottom")
+
+print(pca_plot)
+
+ggsave("images/pca.png", plot = pca_plot, width = 5, height = 4, dpi = 300)
+
 ```
 ```{r}
 # Note: contrast = c(factor, numerator, denominator)
@@ -176,8 +183,16 @@ EnhancedVolcano(res1.df, x = 'log2FoldChange', y = 'padj', lab = res1.df$symbol,
 ```
 ```{r}
 # Volcano plots 2
-EnhancedVolcano(res2.df, x = 'log2FoldChange', y = 'padj', lab = res2.df$symbol,
-                pCutoff = 0.05, FCcutoff = 1)
+png("images/volcano_enhanced.png", width = 800, height = 700, res = 120)
+
+EnhancedVolcano(res2.df,
+                x = 'log2FoldChange',
+                y = 'padj',
+                lab = res2.df$symbol,
+                pCutoff = 0.05,
+                FCcutoff = 1)
+
+dev.off()
 ```
 ```{r}
 # Volcano plots using ggplot2
@@ -193,6 +208,8 @@ ggplot(data = res1.df, aes(x = log2FoldChange, y = -log10(padj), col = expressio
   scale_color_manual(values = c("#3498DB", "grey", "#E74C3C"), 
                      labels = c("Downregulated", "Not significant", "Upregulated")) +
   theme_classic()
+ggsave("images/volcano_plot.png", width = 6, height = 5, dpi = 300)
+
 ```
 ```{r}
 res2.df$expression <- "NOT"
@@ -258,9 +275,12 @@ ha <- HeatmapAnnotation(
 )
 ```
 
+
 ```{r}
-# Plot Heatmap
-Heatmap(
+# Save to PNG
+png("images/heatmap.png", width = 1000, height = 800, res = 150)
+
+ht <- Heatmap(
   mat.z,
   name = "Z-score",
   top_annotation = ha,
@@ -268,12 +288,20 @@ Heatmap(
   cluster_columns = TRUE,
   show_column_names = TRUE,
   show_row_names = FALSE,
-  row_labels = sigs_combined[rownames(mat.z), "symbol"],# useful when above is TRUE
+  row_labels = sigs_combined[rownames(mat.z), "symbol"],
   row_names_gp = gpar(fontsize = 6),
   column_names_gp = gpar(fontsize = 6),
   heatmap_legend_param = list(title = "Z-score", legend_direction = "horizontal")
 )
+
+draw(ht)  # Render to PNG
+dev.off()
+
+# Show in RStudio or output window
+draw(ht)  # Render again to active graphics device
 ```
+
+
 ```{r}
 # Get top 50 genes from both comparisons
 topGenes1 <- head(sigs1.df[order(abs(sigs1.df$log2FoldChange), decreasing = TRUE), ], 50)
