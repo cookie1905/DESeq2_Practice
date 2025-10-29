@@ -1,0 +1,314 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# Load packages
+library(DESeq2) # ‘1.46.0’
+library(dplyr)
+library(ggplot2)
+library(org.Hs.eg.db) # library(org.Mm.eg.db) for mouse
+library(ComplexHeatmap)
+library(circlize)   # for color scales
+library(grid)       # for gpar()
+library(EnhancedVolcano)
+```
+
+```{r}
+# Load count_matrix
+args(read.delim) # header = TRUE by default
+rawCounts <- read.delim("http://genomedata.org/gen-viz-workshop/intro_to_deseq2/tutorial/E-GEOD-50760-raw-counts.tsv")
+```
+
+```{r}
+# Format rawCounts as required by DESeq2
+```
+
+```{r}
+# 1. Set gene ID column as rowname
+rownames(rawCounts) <- rawCounts$Gene.ID
+
+# DESeq2 expects the rawCounts to contain only raw, unnormalized integer values, with no non-numeric columns.
+# 2. Remove columns with non numerical values 
+rawCounts_bkup <- rawCounts
+rawCounts <- rawCounts[, -c(1, 2)]
+
+class(rawCounts) # a data.frame
+# 3. Convert rawCounts as a matrix
+rawCounts <- as.matrix(rawCounts)
+```
+```{r}
+# Note: we can do both steps above in one line of code
+# rawCounts <- as.matrix(rawCounts[, sapply(rawCounts, is.numeric)])
+```
+
+```{r}
+# checks
+is.matrix(rawCounts) # should be TRUE
+is.numeric(rawCounts) # should be TRUE
+```
+
+```{r}
+# # Filtering: remove genes with 0 reads in all samples.
+dim(rawCounts)
+dim(rawCounts[which(rowSums(rawCounts)>0),])
+rawCounts <- rawCounts[which(rowSums(rawCounts)>0),]
+```
+```{r}
+# Load colData (a dataframe describing samples)
+colData <- read.delim("http://genomedata.org/gen-viz-workshop/intro_to_deseq2/tutorial/E-GEOD-50760-experiment-design.tsv")
+```
+
+```{r}
+# Format colData as required by DESeq2
+```
+
+```{r}
+# 1. Set sample ID (here Run column) as rowname
+rownames(colData) <- colData$Run
+
+# 2. Remove unnecessary columns
+# Tissue type is the primary condition of interest
+# Individual IDs are treated as control variables to account for inter-individual variation
+keep <- c("Sample.Characteristic.biopsy.site.", "Sample.Characteristic.individual.")
+colData <- colData[, keep]
+
+# 3. Rename columns
+colnames(colData) <- c("tissue_type", "individual_id")
+
+#  4. Verify that the sample IDs match exactly and are in the same order between rawCounts and colData
+all(rownames(colData) == colnames(rawCounts)) # should return TRUE
+
+head(colData)
+```
+```{r}
+# 5. convert both columns of colData as factors
+class(colData$individual_id) # "character"
+colData$individual_id <- factor(colData$individual_id)
+class(colData$individual_id) # "factor"
+colData$tissue_type <- factor(colData$tissue_type)
+```
+```{r}
+# DESeq2 uses the first factor level as reference
+levels(colData$tissue_type)  # reference = "colorectal cancer metastatic in the liver"
+# Comparisons: "normal" and "primary tumor" vs reference
+```
+```{r}
+# We want to compare "colorectal cancer metastatic in the liver" and  "primary tumor" against "normal" instead
+# 6. Change levels order such that  reference = "normal"
+levels(colData$tissue_type) <- c(
+  "normal",
+  "primary tumor",
+  "colorectal cancer metastatic in the liver"
+)
+levels(colData$tissue_type)
+```
+```{r}
+# Create the DEseq2DataSet object
+# Design: control variable first, condition of interest second
+# DESeq2 adjusts for individual variation before testing tissue_type differences
+dds <- DESeqDataSetFromMatrix(countData = rawCounts, colData = colData, design = ~ individual_id + tissue_type)
+
+```
+
+```{r}
+dds # prints summary of the DESeqDataSet
+
+```
+```{r}
+colData(dds)  # shows sample annotations (e.g., tissue_type, individual_id)
+
+```
+```{r}
+counts(dds)[1:5, 1:5]  # view first few genes and samples
+```
+```{r}
+
+#  Run the DESeq pipeline
+dds <- DESeq(dds)
+```
+
+```{r}
+# Variance Stabilizing Transformation and  plot PCA
+vsd <- vst(dds, blind = FALSE)
+plotPCA(vsd, intgroup="tissue_type")+ theme_grey()
+```
+```{r}
+# Note: contrast = c(factor, numerator, denominator)
+# means Compute log2 fold change as numerator / denominator.
+# contrast = c("tissue_type", "primary tumor", "normal"): positive values mean higher in tumor, negative mean higher in normal
+# contrast = c("tissue_type", "normal", "primary tumor"): positive values mean higher in normal, negative mean higher in tumor
+```
+
+```{r}
+# Extract results
+res1 <- results(dds, contrast = c("tissue_type", "primary tumor", "normal"))
+res1
+```
+```{r}
+# Remove rows with NA 
+res1 <- na.omit(res1)
+res1.df <- as.data.frame(res1)
+res1.df
+```
+```{r}
+# get gene names for gene IDs
+res1.df$symbol <- mapIds(org.Hs.eg.db, keys = rownames(res1.df), keytype = "ENSEMBL", column = "SYMBOL")
+res1.df <- res1.df[!is.na(res1.df$symbol),]
+
+```
+
+```{r}
+res2 <- results(dds, contrast = c("tissue_type", "colorectal cancer metastatic in the liver", "normal"))
+res2 <- na.omit(res2)
+res2.df <- as.data.frame(res2)
+res2.df
+res2.df$symbol <- mapIds(org.Hs.eg.db, keys = rownames(res2.df), keytype = "ENSEMBL", column = "SYMBOL")
+res2.df <- res2.df[!is.na(res2.df$symbol),]
+```
+
+```{r}
+# Volcano plots 1
+EnhancedVolcano(res1.df, x = 'log2FoldChange', y = 'padj', lab = res1.df$symbol,
+                pCutoff = 0.05, FCcutoff = 1)
+
+```
+```{r}
+# Volcano plots 2
+EnhancedVolcano(res2.df, x = 'log2FoldChange', y = 'padj', lab = res2.df$symbol,
+                pCutoff = 0.05, FCcutoff = 1)
+```
+```{r}
+# Volcano plots using ggplot2
+
+res1.df$expression <- "NOT"
+res1.df$expression[res1.df$padj < 0.01 & res1.df$log2FoldChange > 2] <- "UP"
+res1.df$expression[res1.df$padj < 0.01 & res1.df$log2FoldChange < -2] <- "DOWN"
+
+ggplot(data = res1.df, aes(x = log2FoldChange, y = -log10(padj), col = expression)) +
+  geom_vline(xintercept = c(-2, 2), col = "gray", linetype = 'dashed') +
+  geom_hline(yintercept = -log10(0.01), col = "gray", linetype = 'dashed') +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("#3498DB", "grey", "#E74C3C"), 
+                     labels = c("Downregulated", "Not significant", "Upregulated")) +
+  theme_classic()
+```
+```{r}
+res2.df$expression <- "NOT"
+res2.df$expression[res2.df$padj < 0.01 & res2.df$log2FoldChange > 2] <- "UP"
+res2.df$expression[res2.df$padj < 0.01 & res2.df$log2FoldChange < -2] <- "DOWN"
+
+ggplot(data = res2.df, aes(x = log2FoldChange, y = -log10(padj), col = expression)) +
+  geom_vline(xintercept = c(-2, 2), col = "gray", linetype = 'dashed') +
+  geom_hline(yintercept = -log10(0.01), col = "gray", linetype = 'dashed') +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("#3498DB", "grey", "#E74C3C"), 
+                     labels = c("Downregulated", "Not significant", "Upregulated")) +
+  theme_classic()
+```
+
+```{r}
+# Find significant genes
+sigs1.df <- res1.df[res1.df$padj < 0.01,]
+sigs1.df <- sigs1.df[(abs(sigs1.df$log2FoldChange) > 2),]
+sigs1.df <- sigs1.df[sigs1.df$baseMean > 50,] # -  average normalized count for a gene across all samples
+sigs1.df
+
+
+```
+
+```{r}
+sigs2.df <- res2.df[res2.df$padj < 0.01,]
+sigs2.df <- sigs2.df[(abs(sigs2.df$log2FoldChange) > 2),]
+sigs2.df <- sigs2.df[sigs2.df$baseMean > 50,] 
+sigs2.df
+```
+
+```{r}
+# Combine significant genes from both comparisons
+sigs_combined <- rbind(sigs1.df, sigs2.df)
+# Get unique gene IDs
+unique_genes <- unique(c(rownames(sigs1.df), rownames(sigs2.df)))
+# Subset by unique rownames
+sigs_combined <- sigs_combined[unique_genes, ]
+```
+
+```{r}
+# Extract normalized counts for those genes
+mat <- counts(dds, normalized=T)[rownames(sigs_combined),] # or mat <- assay(vsd)[rownames(sigs_combined), ]
+# Z-score transform each gene across samples
+mat.z <- t(apply(mat, 1, scale))
+colnames(mat.z) <- rownames(colData) 
+```
+
+```{r}
+tissue <- colData$tissue_type
+
+# Color map
+tissue_color <- c(
+  "primary tumor" = "darkorange",
+  "normal" = "forestgreen",
+  "colorectal cancer metastatic in the liver" = "firebrick"
+)
+
+ha <- HeatmapAnnotation(
+  Tissue = tissue,
+  col = list(Tissue = tissue_color)
+)
+```
+
+```{r}
+# Plot Heatmap
+Heatmap(
+  mat.z,
+  name = "Z-score",
+  top_annotation = ha,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  show_column_names = TRUE,
+  show_row_names = FALSE,
+  row_labels = sigs_combined[rownames(mat.z), "symbol"],# useful when above is TRUE
+  row_names_gp = gpar(fontsize = 6),
+  column_names_gp = gpar(fontsize = 6),
+  heatmap_legend_param = list(title = "Z-score", legend_direction = "horizontal")
+)
+```
+```{r}
+# Get top 50 genes from both comparisons
+topGenes1 <- head(sigs1.df[order(abs(sigs1.df$log2FoldChange), decreasing = TRUE), ], 50)
+topGenes2 <- head(sigs2.df[order(abs(sigs2.df$log2FoldChange), decreasing = TRUE), ], 50)
+```
+
+```{r}
+# Combine both sets
+topGenes_combined <- rbind(topGenes1, topGenes2)
+# Get unique ENSEMBL IDs
+unique_genes <- unique(c(rownames(topGenes1), rownames(topGenes2)))
+# Subset by unique rownames
+topGenes_combined <- topGenes_combined[unique_genes, ]
+```
+
+```{r}
+# Extract normalized counts for those genes
+topmat <- counts(dds, normalized=T)[rownames(topGenes_combined),] 
+topmat.z <- t(apply(topmat, 1, scale)) # Z score transformation of genes across samples.
+colnames(topmat.z) <- rownames(colData)
+```
+
+```{r}
+Heatmap(
+  topmat.z,
+  name = "Z-score",
+  top_annotation = ha,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  show_column_names = TRUE,
+  show_row_names = TRUE,
+  row_labels = topGenes_combined[rownames(topmat.z), "symbol"],
+  row_names_gp = gpar(fontsize = 6),
+  column_names_gp = gpar(fontsize = 6),
+  heatmap_legend_param = list(title = "Z-score", legend_direction = "horizontal")
+)
+```
+
