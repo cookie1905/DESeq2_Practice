@@ -1,0 +1,182 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+setwd("C:\\DESeq2_Practice")
+```
+
+```{r}
+library(DESeq2)
+library("ggplot2")
+```
+
+```{r}
+packageVersion("DESeq2")
+```
+
+```{r}
+raw_count <- readRDS("RNA-seq_RawCounts.Rds")
+raw_count
+```
+
+```{r}
+tissue_type <- factor(c(rep("Stroma",10),rep("Normal",10),rep("Tumor",10)))
+levels(tissue_type)
+```
+# R will choose a reference level for factors based on alphabetical order
+# Normal < Stroma < Tumor
+# can override order using for example levels = c("Stroma", "Normal", "Tumor")
+# make sure first level is always the reference
+
+```{r}
+cancer_type <- factor(c(rep(c(rep("squamous",4),rep("adeno",6)),3)))
+```
+
+```{r}
+col_data <- data.frame(sampleName=colnames(raw_count), tissueType=tissue_type, cancerType=cancer_type)
+col_data
+```
+# Measure the effect of the tissue type, while controlling for cancer type.
+
+```{r}
+  dds <- DESeqDataSetFromMatrix(
+    countData = raw_count,
+    colData = col_data,
+    design = ~ cancerType + tissueType
+  )
+dds
+```
+
+
+# Filtering 
+# A gene passes the filter if any 3 or more samples have ≥10 reads.
+
+```{r}
+smallestGroupSize <- 3
+keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
+dds <- dds[keep,]
+dds
+```
+# Differential expression analysis
+```{r}
+dds <- DESeq(dds)
+```
+
+# results for the the last variable in the design.
+# if it’s a factor, DESeq2 compares the last level versus the reference level.
+
+```{r}
+results(dds) 
+```
+
+# For a specific comparison
+```{r}
+resultsNames(dds) # lists the coefficients estimated by the GLM in DESeq2.
+```
+# Tumor vs Normal 
+# log₂ fold change is calculated as Tumor ÷ Normal:
+# - Positive → higher in Tumor
+# - Negative → higher in Normal
+```{r}
+res <- results(dds, name="tissueType_Tumor_vs_Normal")
+head(res)
+```
+
+# Or use
+```{r}
+res <- results(dds, contrast=c("tissueType","Tumor","Normal"))
+head(res)
+```
+```{r}
+summary(res)
+```
+# padj= FDR-adjusted p-value.
+# alpha = desired FDR level
+
+# Independent filtering:
+# DESeq2 looks at the mean normalized count per gene.
+# It chooses a threshold that maximizes the number of genes with padj < alpha 
+# Genes below this threshold are not included in the FDR adjustment step.
+# Their padj is set to NA
+
+```{r}
+res05 <- results(dds, alpha=0.05) # set alpha to 0.05 instead of 0.1
+summary(res05)
+```
+
+# Total tested genes: 25042 
+# Adjusted p-value < 0.05: significant genes after FDR correction
+# LFC > 0 (up): 4,636 genes — upregulated in Tumor vs Normal
+# LFC < 0 (down): 3,353 genes — downregulated in Tumor vs Normal
+# 84 genes removed due to extreme Cook’s distance values
+# 0 genes filtered by independent filtering
+
+```{r}
+sum(res05$padj < 0.05, na.rm=TRUE) # 4636 + 3353
+```
+
+```{r}
+resultsNames(dds)
+```
+
+# Log fold change shrinkage for visualization and ranking
+# only shrinks the log₂ fold changes, not p-values or FDR thresholds.
+
+```{r}
+resLFC <- lfcShrink(dds, coef="tissueType_Tumor_vs_Normal", type="apeglm")
+head(resLFC)
+```
+
+```{r}
+summary(resLFC)
+```
+# MA-plot
+# X axis:
+# Low on the left → lowly expressed genes
+# High on the right → highly expressed genes
+
+# Y-axis:
+# Positive → higher in the numerator level (Tumor)
+# Negative → higher in the reference level (Normal)
+
+# Colored points:
+# Blue, genes with padj < alpha (0.1) → statistically significant DE genes
+# Gray → not significant
+
+```{r}
+plotMA(res, ylim=c(-2,2))
+```
+# more useful to visualize the MA-plot for the shrunken log2 fold changes
+# remove the noise associated with log2 fold changes from low count genes.
+
+```{r}
+plotMA(resLFC, ylim=c(-2,2))
+```
+# Plot counts
+# examine the counts of reads for a single gene across the groups
+```{r}
+which.min(res$padj)
+```
+```{r}
+res[3652, ]
+```
+# ENSG00000169554 is statistically significant
+# is expressed more in Normal compared to Tumor
+
+
+```{r}
+d <- plotCounts(dds, gene=which.min(res$padj), intgroup="tissueType", 
+                returnData=TRUE)
+d
+```
+
+
+```{r}
+
+ggplot(d, aes(x=tissueType, y=count)) + 
+  geom_point(position=position_jitter(w=0.1,h=0)) + 
+  scale_y_log10(breaks=c(25,100,400))
+```
+

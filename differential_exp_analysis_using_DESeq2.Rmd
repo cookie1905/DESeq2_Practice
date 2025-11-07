@@ -106,8 +106,7 @@ levels(colData$tissue_type)
 ```
 ```{r}
 # Create the DEseq2DataSet object
-# Design: control variable first, condition of interest second
-# DESeq2 adjusts for individual variation before testing tissue_type differences
+# measure the effect of the tissue_type, while adjusting for individual variations.
 dds <- DESeqDataSetFromMatrix(countData = rawCounts, colData = colData, design = ~ individual_id + tissue_type)
 
 ```
