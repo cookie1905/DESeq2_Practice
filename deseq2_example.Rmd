@@ -5,6 +5,7 @@ output: html_notebook
 
 ```{r}
 setwd("C:\\DESeq2_Practice")
+getwd()
 ```
 
 ```{r}
@@ -17,36 +18,49 @@ packageVersion("DESeq2")
 ```
 
 ```{r}
-raw_count <- readRDS("RNA-seq_RawCounts.Rds")
-raw_count
+rawCount <- readRDS("data\\RNA-seq_RawCounts.Rds")
+rawCount
 ```
 
 ```{r}
-tissue_type <- factor(c(rep("Stroma",10),rep("Normal",10),rep("Tumor",10)))
-levels(tissue_type)
+tissueType <- factor(c(rep("Stroma",10),rep("Normal",10),rep("Tumor",10)))
+levels(tissueType)
 ```
 # R will choose a reference level for factors based on alphabetical order
 # Normal < Stroma < Tumor
-# can override order using for example levels = c("Stroma", "Normal", "Tumor")
-# make sure first level is always the reference
+# Can override order using for example levels = c("Stroma", "Normal", "Tumor")
+# Make sure first level is always the reference
+# Level names should only contain letters, numbers, underscore and period.
 
 ```{r}
-cancer_type <- factor(c(rep(c(rep("squamous",4),rep("adeno",6)),3)))
+cancerType <- factor(c(rep(c(rep("squamous",4),rep("adeno",6)),3)))
 ```
 
 ```{r}
-col_data <- data.frame(sampleName=colnames(raw_count), tissueType=tissue_type, cancerType=cancer_type)
-col_data
+colData <- data.frame(sampleName = colnames(rawCount),
+                      tissueType=tissueType,
+                      cancerType=cancerType)
+
+colData
 ```
+```{r}
+table(colData$cancerType, colData$tissueType)
+```
+
+
 # Measure the effect of the tissue type, while controlling for cancer type.
+# Put variable of interest (tissueType) at the end of the design formula.
 
 ```{r}
   dds <- DESeqDataSetFromMatrix(
-    countData = raw_count,
-    colData = col_data,
+    countData = rawCount,
+    colData = colData,
     design = ~ cancerType + tissueType
   )
 dds
+```
+```{r}
+colData(dds)
 ```
 
 
@@ -59,13 +73,17 @@ keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
 dds <- dds[keep,]
 dds
 ```
+
+
 # Differential expression analysis
 ```{r}
 dds <- DESeq(dds)
 ```
 
-# results for the the last variable in the design.
-# if it’s a factor, DESeq2 compares the last level versus the reference level.
+# results for the the last variable in the design,
+# comparing its last factor level vs the reference level.
+# ~ cancerType + tissueType → results(dds) gives tissueType results.
+# ~ tissueType + cancerType → results(dds) gives cancerType results.
 
 ```{r}
 results(dds) 
@@ -92,13 +110,33 @@ head(res)
 ```{r}
 summary(res)
 ```
-# padj= FDR-adjusted p-value.
-# alpha = desired FDR level
+```{r}
+sum(is.na(res$padj)) # corresponds to outliers [1]: 84, 0.34%
+
+```
+```{r}
+mcols(res)$description # Information about columns of res 
+```
+```{r}
+resOrdered <- res[order(res$pvalue),] # order results table by the smallest p value
+
+write.csv(as.data.frame(resOrdered), 
+          file="data\\tissueType_Tumor_vs_Normal.csv")
+```
+
+
+
+# padj = FDR-adjusted p-value (p value adjusted for multiple testing.
+# alpha = threshold for the adjusted p-value (default is 0.1)
+# alpha = 0.1 -> genes with padj < 0.1 are significant.
 
 # Independent filtering:
 # DESeq2 looks at the mean normalized count per gene.
 # It chooses a threshold that maximizes the number of genes with padj < alpha 
-# Genes below this threshold are not included in the FDR adjustment step.
+# Genes below this threshold are not included in the multiple testing correction.
+# This improves the detection of truly significant genes.
+
+# Note: Independent filtering does not remove genes from your dataset.
 # Their padj is set to NA
 
 ```{r}
@@ -107,14 +145,17 @@ summary(res05)
 ```
 
 # Total tested genes: 25042 
-# Adjusted p-value < 0.05: significant genes after FDR correction
-# LFC > 0 (up): 4,636 genes — upregulated in Tumor vs Normal
-# LFC < 0 (down): 3,353 genes — downregulated in Tumor vs Normal
-# 84 genes removed due to extreme Cook’s distance values
-# 0 genes filtered by independent filtering
+# genes with padj < 0.05 are significant
+# LFC > 0 (up): 4,636 genes — upregulated in Tumor compared to Normal
+# LFC < 0 (down): 3,353 genes — downregulated in Tumor compared to Normal
+# 84 genes removed due to extreme count (their padj is set to NA)
+# 0 genes filtered by independent filtering 
 
 ```{r}
 sum(res05$padj < 0.05, na.rm=TRUE) # 4636 + 3353
+```
+```{r}
+sum(is.na(res05$padj))
 ```
 
 ```{r}
@@ -122,7 +163,7 @@ resultsNames(dds)
 ```
 
 # Log fold change shrinkage for visualization and ranking
-# only shrinks the log₂ fold changes, not p-values or FDR thresholds.
+# only shrinks the log₂ fold changes, not p-values or padj.
 
 ```{r}
 resLFC <- lfcShrink(dds, coef="tissueType_Tumor_vs_Normal", type="apeglm")
@@ -155,9 +196,9 @@ plotMA(res, ylim=c(-2,2))
 plotMA(resLFC, ylim=c(-2,2))
 ```
 # Plot counts
-# examine the counts of reads for a single gene across the groups
+# Examine the counts of reads for a single gene across the groups
 ```{r}
-which.min(res$padj)
+which.min(res$padj) # index (row number) of the gene with the smallest padj
 ```
 ```{r}
 res[3652, ]
@@ -179,4 +220,8 @@ ggplot(d, aes(x=tissueType, y=count)) +
   geom_point(position=position_jitter(w=0.1,h=0)) + 
   scale_y_log10(breaks=c(25,100,400))
 ```
-
+```{r}
+resSig <- subset(resOrdered, padj < 0.1)
+resSig
+```
+# Data transformations and visualization
