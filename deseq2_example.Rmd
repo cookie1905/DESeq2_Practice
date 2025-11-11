@@ -23,6 +23,21 @@ rawCount
 ```
 
 ```{r}
+dim(rawCount)
+```
+# Filtering 
+# A gene passes the filter if any 3 or more samples have ≥10 reads.
+
+
+```{r}
+numberOfSamples <- 3
+keep <- rowSums(rawCount >= 10) >= numberOfSamples
+rawCount <- rawCount[keep,]
+
+dim(rawCount)
+```
+
+```{r}
 tissueType <- factor(c(rep("Stroma",10),rep("Normal",10),rep("Tumor",10)))
 levels(tissueType)
 ```
@@ -44,9 +59,9 @@ colData <- data.frame(sampleName = colnames(rawCount),
 colData
 ```
 ```{r}
-table(colData$cancerType, colData$tissueType)
+table(colData$cancerType, colData$tissueType) 
 ```
-
+# no tissue type is over- or under-represented within any cancer type
 
 # Measure the effect of the tissue type, while controlling for cancer type.
 # Put variable of interest (tissueType) at the end of the design formula.
@@ -63,19 +78,9 @@ dds
 colData(dds)
 ```
 
-
-# Filtering 
-# A gene passes the filter if any 3 or more samples have ≥10 reads.
-
-```{r}
-smallestGroupSize <- 3
-keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
-dds <- dds[keep,]
-dds
-```
-
-
 # Differential expression analysis
+# Operates on raw counts
+
 ```{r}
 dds <- DESeq(dds)
 ```
@@ -107,16 +112,20 @@ head(res)
 res <- results(dds, contrast=c("tissueType","Tumor","Normal"))
 head(res)
 ```
+
 ```{r}
 summary(res)
 ```
+
 ```{r}
 sum(is.na(res$padj)) # corresponds to outliers [1]: 84, 0.34%
 
 ```
+
 ```{r}
 mcols(res)$description # Information about columns of res 
 ```
+
 ```{r}
 resOrdered <- res[order(res$pvalue),] # order results table by the smallest p value
 
@@ -126,9 +135,9 @@ write.csv(as.data.frame(resOrdered),
 
 
 
-# padj = FDR-adjusted p-value (p value adjusted for multiple testing.
+# padj = p value adjusted for multiple testing.
 # alpha = threshold for the adjusted p-value (default is 0.1)
-# alpha = 0.1 -> genes with padj < 0.1 are significant.
+# alpha = 0.1 means genes with padj < 0.1 are significant.
 
 # Independent filtering:
 # DESeq2 looks at the mean normalized count per gene.
@@ -136,12 +145,16 @@ write.csv(as.data.frame(resOrdered),
 # Genes below this threshold are not included in the multiple testing correction.
 # This improves the detection of truly significant genes.
 
-# Note: Independent filtering does not remove genes from your dataset.
-# Their padj is set to NA
+# Note: Independent filtering does not remove any genes from your dataset.
+# Their padj is set to NA to indicate they were not tested for significance.
 
 ```{r}
-res05 <- results(dds, alpha=0.05) # set alpha to 0.05 instead of 0.1
+# set alpha to 0.05 instead of default 0.1
+res05 <- results(dds,name = "tissueType_Tumor_vs_Normal", alpha=0.05) 
 summary(res05)
+```
+```{r}
+head(res05)
 ```
 
 # Total tested genes: 25042 
@@ -154,6 +167,7 @@ summary(res05)
 ```{r}
 sum(res05$padj < 0.05, na.rm=TRUE) # 4636 + 3353
 ```
+
 ```{r}
 sum(is.na(res05$padj))
 ```
@@ -200,6 +214,7 @@ plotMA(resLFC, ylim=c(-2,2))
 ```{r}
 which.min(res$padj) # index (row number) of the gene with the smallest padj
 ```
+
 ```{r}
 res[3652, ]
 ```
@@ -220,8 +235,149 @@ ggplot(d, aes(x=tissueType, y=count)) +
   geom_point(position=position_jitter(w=0.1,h=0)) + 
   scale_y_log10(breaks=c(25,100,400))
 ```
+
 ```{r}
 resSig <- subset(resOrdered, padj < 0.1)
-resSig
+head(resSig)
 ```
+
 # Data transformations and visualization
+# Use transformed versions of the count data
+
+
+# Mean expression vs Variability
+
+```{r}
+norm_counts <- counts(dds, normalized = TRUE)
+
+gene_means <- rowMeans(norm_counts)
+gene_vars  <- apply(norm_counts, 1, var)
+
+```
+
+```{r}
+plot(gene_means, gene_vars,
+     log = "xy",             # log scale makes the trend visible
+     pch = 16, cex = 0.5,
+     xlab = "Mean normalized count",
+     ylab = "Variance across samples",
+     main = "Mean–variance relationship")
+
+```
+# Variability shows how much a gene's expression changes across samples.
+# Genes with higher average expression usually have higher variance.
+# This means highly expressed genes can dominate clustering.
+# Low- or medium-expressed genes may get ignored even if they have important patterns.
+
+# Variance stabilization
+
+```{r}
+vsd <- vst(dds, blind=FALSE) 
+head(assay(vsd),2)
+```
+
+```{r}
+vsd_mat <- assay(vsd)
+gene_means <- rowMeans(vsd_mat)
+gene_vars  <- apply(vsd_mat, 1, var)
+```
+
+# Plot variance stabilized data
+
+```{r}
+plot(gene_means, gene_vars,
+     pch = 16, cex = 0.5,
+     xlab = "Mean (VST transformed)",
+     ylab = "Variance",
+     main = "Mean–variance relationship after VST")
+
+```
+# Data quality assessment by sample clustering and visualization
+
+# Heatmaps
+
+```{r}
+# Compute the row means (average normalized counts) for all genes
+geneMeans <- rowMeans(counts(dds, normalized = TRUE))
+
+# Order the genes by their mean expression in decreasing order
+# 'order()' returns the row indices that would sort the vector
+# '[1:20]' selects the top 20 most highly expressed genes
+topExpressed <- order(geneMeans, decreasing = TRUE)[1:20]
+
+# Convert relevant sample information to a data frame for annotation
+df <- as.data.frame(colData(dds))[, c("tissueType", "cancerType")]
+head(df)
+```
+
+
+```{r}
+library(pheatmap)
+
+pheatmap(assay(vsd)[topExpressed,], cluster_rows=FALSE, show_rownames=FALSE,
+         cluster_cols=FALSE, annotation_col=df)
+```
+```{r}
+sigs <- resOrdered[!is.na(resOrdered$padj) & 
+                     resOrdered$padj < 0.05 & 
+                     abs(resOrdered$log2FoldChange) > 2, ]
+dim(sigs)
+```
+
+```{r}
+normCounts <- counts(dds, normalized = TRUE)
+sigGenes <- rownames(sigs)
+
+# match() returns a vector of positions of genes_sig in rownames(norm_counts).
+indices <- match(sigGenes, rownames(normCounts)) 
+any(is.na(indices))
+```
+```{r}
+pheatmap(assay(vsd)[indices,], cluster_rows=T, show_rownames=FALSE,
+         cluster_cols=T, annotation_col=df)
+```
+# sample clustering
+
+# Heatmap of the sample-to-sample distances
+```{r}
+sampleDists <- dist(t(assay(vsd))) # get sample-to-sample distances.
+```
+
+```{r}
+
+```
+
+```{r}
+library("RColorBrewer")
+
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$tissueType, vsd$cancerType, sep="-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+# PCA plot of the samples
+
+```{r}
+plotPCA(vsd, intgroup=c("tissueType"))
+```
+```{r}
+plotPCA(vsd, intgroup=c("cancerType"))
+```
+
+```{r}
+pcaData <- plotPCA(vsd, intgroup=c("tissueType", "cancerType"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(PC1, PC2, color=tissueType, shape=cancerType)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+```
+
