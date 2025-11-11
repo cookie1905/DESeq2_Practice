@@ -61,10 +61,16 @@ colData
 ```{r}
 table(colData$cancerType, colData$tissueType) 
 ```
-# no tissue type is over- or under-represented within any cancer type
+# no tissue type is over- or under-represented within any cancerType
 
-# Measure the effect of the tissue type, while controlling for cancer type.
-# Put variable of interest (tissueType) at the end of the design formula.
+
+# cancerType: Captures the effect of cancerType independent of tissueType.
+#             Overall effect of cancerType averaged across all tissueType.
+
+
+# tissueType: Captures the effect of tissue type independent of cancerType.
+#             Overall effect of tissueType averaged across all cancerTypes.
+
 
 ```{r}
   dds <- DESeqDataSetFromMatrix(
@@ -81,14 +87,20 @@ colData(dds)
 # Differential expression analysis
 # Operates on raw counts
 
+# DESeq() runs the following in below order:
+# dds <- estimateSizeFactors(dds)
+# dds <- estimateDispersions(dds)
+# dds <- nbinomWaldTest(dds)
+
 ```{r}
 dds <- DESeq(dds)
 ```
 
+# results(dds)
 # results for the the last variable in the design,
 # comparing its last factor level vs the reference level.
-# ~ cancerType + tissueType → results(dds) gives tissueType results.
-# ~ tissueType + cancerType → results(dds) gives cancerType results.
+# design = ~ cancerType + tissueType → results(dds) gives tissueType results.
+# design = ~ tissueType + cancerType → results(dds) gives cancerType results.
 
 ```{r}
 results(dds) 
@@ -98,6 +110,12 @@ results(dds)
 ```{r}
 resultsNames(dds) # lists the coefficients estimated by the GLM in DESeq2.
 ```
+# Intercept: expression for cancerType adeno and tissueType Normal.
+# cancerType_squamous_vs_adeno: Effect of condition squamous vs adeno, controlling for tissueType.
+# tissueType_Stroma_vs_Normal: Effect of tissueType Stroma vs Normal controlling for cancerType.
+# tissueType_Tumor_vs_Normal: Effect of tissueType Tumor vs Normal controlling for cancerType.
+
+
 # Tumor vs Normal 
 # log₂ fold change is calculated as Tumor ÷ Normal:
 # - Positive → higher in Tumor
@@ -312,6 +330,35 @@ head(df)
 
 
 ```{r}
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+```
+
+```{r}
+topGenes <- rownames(counts(dds)[topExpressed, ])
+
+geneSymbols <- mapIds(
+  org.Hs.eg.db,
+  keys = topGenes,
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
+
+# Combine into a data frame
+topGenesDF <- data.frame(
+  EnsemblID = topGenes,
+  GeneSymbol = geneSymbols
+)
+topGenesDF[!is.na(topGenesDF$GeneSymbol), 2]
+
+```
+
+```{r}
+rownames(counts(dds)[topExpressed, ])
+```
+
+```{r}
 library(pheatmap)
 
 pheatmap(assay(vsd)[topExpressed,], cluster_rows=FALSE, show_rownames=FALSE,
@@ -344,6 +391,7 @@ sampleDists <- dist(t(assay(vsd))) # get sample-to-sample distances.
 ```
 
 ```{r}
+colData(vsd)
 
 ```
 
@@ -379,5 +427,45 @@ ggplot(pcaData, aes(PC1, PC2, color=tissueType, shape=cancerType)) +
   xlab(paste0("PC1: ",percentVar[1],"% variance")) +
   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
   coord_fixed()
+```
+# Adding interactions to design
+# How the effect of one variable depends on the level of the other.
+
+# cancerType:tissueType: whether the effect of cancerType depends on tissueType.
+#                        or
+#                        whether the effect of tissueType depends on cancerType.
+
+# Captures when change in expression due to cancerType adeno and squamous is 
+# different for tissueType normal, sqamous and tumor 
+
+
+```{r}
+ddsInt <- dds
+design(ddsInt) <- ~ cancerType + tissueType + cancerType:tissueType
+ddsInt <- DESeq(ddsInt)
+```
+
+```{r}
+resultsNames(ddsInt)
+```
+
+# Interaction coefficients are only for non-reference × non-reference combinations.
+# Reference levels are omitted
+
+# If we only want to know how tissueType effects differ between cancerTypes
+# Not the main effects, then use
+
+```{r}
+ddsInt2 <- dds
+ddsInt2$group <- factor(paste0(ddsInt2$tissueType, ddsInt2$cancerType))
+design(ddsInt2) <- ~ group
+ddsInt2 <- DESeq(ddsInt2)
+```
+
+```{r}
+resultsNames(ddsInt2)
+```
+```{r}
+levels(ddsInt2$group)
 ```
 
